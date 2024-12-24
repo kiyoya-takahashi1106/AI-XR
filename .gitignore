@@ -4,14 +4,19 @@ Temp/
 Obj/
 Build/
 Builds/
+
 # User-specific files
 .userprefs
 .vs/
 .idea/
 .vscode/
+
+# Unity-specific directories and files
+AI-XR-Unity/Logs/
+AI-XR-Unity/Packages/
+AI-XR-Unity/ProjectSettings/
+AI-XR-Unity/UserSettings/
+
 # OS generated files
 .DS_Store
 Thumbs.db
-# Windows Installer files
-Thumbs.db
-ehthumbs.db
