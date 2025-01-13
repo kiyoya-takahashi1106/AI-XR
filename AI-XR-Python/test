@@ -1,0 +1,247 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using UnityEngine;
+using System.Threading;
+using System;
+using System.IO;
+
+public class MyListener : MonoBehaviour
+{
+    // スレッドオブジェクト
+    Thread thread;
+
+    // サーバーの接続ポート
+    public int connectionPort = 25001;
+
+    // サーバーとクライアントのオブジェクト
+    TcpListener server;
+    TcpClient client;
+
+    // サーバーが動作中であることを示すフラグ
+    bool running;
+
+    // プレイヤーの座標
+    Vector3 position = Vector3.zero;
+
+
+
+    void Start()
+    {
+        // データ受信処理を別スレッドで実行
+        thread = new Thread(GetData)
+        {
+            IsBackground = true // Unityをブロックしないようにバックグラウンドで実行
+        };
+
+        // サーバーオブジェクトの初期化
+        server = new TcpListener(IPAddress.Any, connectionPort);
+        client = new TcpClient();
+
+        // サーバー動作中フラグをセット
+        running = true;
+
+        // スレッドの開始
+        thread.Start();
+    }
+
+
+
+    // データ受信のメイン処理
+    void GetData()
+    {
+        // サーバーを開始して接続を待機
+        server = new TcpListener(IPAddress.Any, connectionPort);
+        server.Start();
+        Debug.Log("Server started, waiting for client...");
+
+        // サーバーが動作中の間、クライアント接続を待機
+        while (running)
+        {
+            try
+            {
+                // クライアントが未接続の場合、接続を待機
+                if (client == null || !client.Connected)
+                {
+                    Debug.Log("Waiting for client connection...");
+                    client = server.AcceptTcpClient(); // クライアント接続を受け付け
+                    Debug.Log("Client connected!");
+                }
+
+                // 接続されたクライアントからデータを受信
+                Connection();
+            }
+            catch (SocketException ex)
+            {
+                Debug.LogError($"SocketException: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Exception in GetData: {ex.Message}");
+            }
+        }
+
+        // サーバー停止時にリソースを解放
+        server.Stop();
+        client?.Close();
+    }
+
+
+
+    void Connection()
+    {
+        try
+        {
+            if (client.Connected)
+            {
+                // ネットワークストリームを取得
+                NetworkStream nwStream = client.GetStream();
+                byte[] buffer = new byte[client.ReceiveBufferSize];
+
+                // クライアントが接続を維持している間データを受信
+                while (running)
+                {
+                    // データを読み取る
+                    int bytesRead = nwStream.Read(buffer, 0, client.ReceiveBufferSize);
+
+                    // クライアントが切断した場合
+                    if (bytesRead == 0)
+                    {
+                        Debug.LogWarning("Client disconnected");
+                        running = false;
+                        return;
+                    }
+
+                    // データを文字列に変換
+                    string dataReceived = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+                    // データが空でない場合
+                    if (!string.IsNullOrEmpty(dataReceived))
+                    {
+                        bool mode_change = false;
+                        if (dataReceived.Contains("mode:"))
+                        {
+                            mode_change = true;
+                        }
+
+                        // 座標データとモードデータを解析して更新
+                        //Debug.Log($"Received: {dataReceived}");
+                        var result = ParseData(dataReceived);
+                        position = result.Item1;  // 座標を取得
+                        bool mode = result.Item2; // モードを取得
+
+                        if (mode_change)
+                        {
+                            if (mode)
+                            {
+                                Debug.Log("運動してください");
+                            } 
+                            else
+                            {
+                                Debug.Log("運動をやめてもいいですよ");
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogWarning("Client disconnected");
+                running = false;
+            }
+        }
+        catch (IOException ex)
+        {
+            Debug.LogError($"IOException: {ex.Message}");
+            running = false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error in Connection: {ex.Message}");
+        }
+    }
+
+
+
+    // 受信したデータを座標とモードに分けて解析
+    public static (Vector3, bool) ParseData(string data)
+    {
+        // もし "mode:" という文字列が含まれていればモードデータ
+        if (data.Contains("mode:"))
+        {
+            // モードの解析
+            bool mode = false;
+            string modeData = data.Trim();
+
+            if (modeData == "mode:True")
+            {
+                mode = true;
+            }
+            else if (modeData == "mode:False")
+            {
+                mode = false;
+            }
+            else
+            {
+                // 無効なモード形式の場合は警告を表示するが、デフォルトでmode:Falseとする
+                Debug.LogWarning($"Invalid mode format: {modeData}. Defaulting to mode:False.");
+                mode = false;
+            }
+            return (Vector3.zero, mode); // 座標は変えないのでVector3.zeroを返す
+        }
+        else
+        {
+            // 座標データの場合
+            // データをカンマ区切りで分割
+            string[] splitData = data.Split(',');
+
+            // 座標データの解析
+            if (splitData.Length >= 2 &&
+                float.TryParse(splitData[0], out float x) &&
+                float.TryParse(splitData[1], out float z))
+            {
+                // 座標の変換
+                Vector3 position = new Vector3(x - 9.9f, 6, z + 7);
+                return (position, false); // modeは関係ないのでfalseを返す
+            }
+
+            // 無効な座標データの場合、デフォルトの座標を返す
+            Debug.LogWarning("Invalid coordinate format. Defaulting to (0, 6, 0).");
+            return (new Vector3(0, 6, 0), false);
+        }
+    }
+
+
+
+    // 毎フレームの更新処理
+    void Update()
+    {
+        // 受信した座標にプレイヤーを移動
+        transform.position = position;
+    }
+
+
+
+    // オブジェクト破棄時のクリーンアップ処理
+    void OnDestroy()
+    {
+        // サーバーを停止し、スレッドを終了
+        running = false;
+
+        try
+        {
+            server?.Stop();
+            client?.Close();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error during cleanup: {ex.Message}");
+        }
+
+        // スレッドが実行中なら終了を待機
+        if (thread != null && thread.IsAlive)
+        {
+            thread.Join();
+        }
+    }
+}
