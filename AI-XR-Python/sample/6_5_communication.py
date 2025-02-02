@@ -3,6 +3,7 @@ import cv2
 import mediapipe as mp
 import math
 import time
+import threading
 
 # MediaPipeのセットアップ
 mp_pose = mp.solutions.pose
@@ -25,6 +26,24 @@ cap = cv2.VideoCapture(0)
 
 move_lst = []  # 動いたときはdiff_zの絶対値が4より大きい時(動いた時)はTrueを入れる
 move_mode = False  # Trueの時は運動を促進
+
+# Unityからのメッセージを受信するための関数
+def receive_from_unity():
+    global move_mode
+    while True:
+        try:
+            data = sock.recv(1024).decode("utf-8")
+            if (data == "modechange_to_False"):
+                move_mode = False
+                print("運動モードが終了しました")
+        except Exception as e:
+            print(f"Error receiving data: {e}")
+            break
+
+# Unityからのメッセージ受信用のスレッドを開始
+thread = threading.Thread(target=receive_from_unity)
+thread.daemon = True
+thread.start()
 
 try:
     while cap.isOpened():
@@ -101,9 +120,9 @@ try:
             # move_lstの更新
             if len(move_lst) < 20:
                 move_lst.append(move_flag)
-                print(move_lst)
+                # print(move_lst)
             else:
-                print(move_lst)
+                # print(move_lst)
                 
                 # 運動モードの制御
                 if move_mode:  # 運動を促進されている時

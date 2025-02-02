@@ -5,15 +5,22 @@ using UnityEngine;
 using System.Threading;
 using System;
 
-public class MyListener : MonoBehaviour
+public class PlayerScript : MonoBehaviour
 {
     Thread thread;
     public int connectionPort = 25001;
     TcpListener server;
     TcpClient client;
     bool running;
-    Vector3 position = Vector3.zero;
+    Vector3 position = new Vector3(-5, 6, 7); // 初期位置のY座標を6に設定
     private readonly object positionLock = new object();
+
+    public GameObject coin; // Unity上に配置されているコインオブジェクト
+
+    // ゲーム開始フラグ／開始要求フラグ
+    private bool gameStart = false;
+    private bool startGameRequested = false;
+    private readonly object startGameLock = new object();
 
     void Start()
     {
@@ -25,6 +32,21 @@ public class MyListener : MonoBehaviour
         server = new TcpListener(IPAddress.Any, connectionPort);
         running = true;
         thread.Start();
+
+        // コインを非表示にする
+        if (coin == null)
+        {
+            // シーン内に "Coin" という名前のオブジェクトがあれば取得
+            coin = GameObject.Find("Coin");
+            if (coin == null)
+            {
+                Debug.LogError("コインオブジェクトが見つかりませんでした。");
+            }
+            else
+            {
+                coin.SetActive(false); // 初期状態で非表示
+            }
+        }
     }
 
     void GetData()
@@ -83,6 +105,12 @@ public class MyListener : MonoBehaviour
                         if (dataReceived.Contains("modechange_to_True"))
                         {
                             Debug.Log("運動促進 : コインゲーム開始");
+
+                            // スレッド上では直接オブジェクト操作せず、フラグでリクエストを送る
+                            lock (startGameLock)
+                            {
+                                startGameRequested = true;
+                            }
                         }
                         else
                         {
@@ -109,7 +137,7 @@ public class MyListener : MonoBehaviour
             float.TryParse(splitData[0], out float x) &&
             float.TryParse(splitData[1], out float z))
         {
-            return new Vector3(x - 9.9f, 6, z + 7);
+            return new Vector3(x - 9.9f, 6, z + 7); // Y座標を固定
         }
 
         Debug.LogWarning("Invalid coordinate format. Defaulting to (0, 6, 0).");
@@ -118,9 +146,70 @@ public class MyListener : MonoBehaviour
 
     void Update()
     {
+        // スレッドから受け取った位置情報を反映
         lock (positionLock)
         {
-            transform.position = position;
+            // 現在のY座標を保持して位置を更新
+            transform.position = new Vector3(position.x, transform.position.y, position.z);
+        }
+
+        // スレッドからの「ゲーム開始」リクエストがあれば、メインスレッドで実行
+        lock (startGameLock)
+        {
+            if (startGameRequested)
+            {
+                StartGame();
+                startGameRequested = false;
+            }
+        }
+    }
+
+    void StartGame()
+    {
+        gameStart = true;
+        // コインを表示する
+        if (coin != null)
+        {
+            coin.SetActive(true);
+        }
+    }
+
+    public void CollectCoin()
+    {
+        if (gameStart)
+        {
+            Debug.Log("コインゲーム終了!!!!");
+            gameStart = false;
+
+            // コインを再度非表示にする
+            if (coin != null)
+            {
+                coin.SetActive(false);
+            }
+
+            // モード変更メッセージを送信
+            SendModeChangeMessage("modechange_to_False");
+        }
+    }
+
+    private void SendModeChangeMessage(string message)
+    {
+        try
+        {
+            if (client != null && client.Connected)
+            {
+                NetworkStream nwStream = client.GetStream();
+                if (nwStream != null && nwStream.CanWrite)
+                {
+                    byte[] messageBytes = Encoding.UTF8.GetBytes(message);
+                    nwStream.Write(messageBytes, 0, messageBytes.Length);
+                    Debug.Log("Sent message: " + message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"Error sending message: {ex.Message}");
         }
     }
 
